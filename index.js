@@ -92,13 +92,19 @@ fastify.get('/api/download', async (request, reply) => {
             id: metadata.id,
             title: metadata.title,
             thumbnail: metadata.thumbnail,
-            duration: metadata.duration_string,
+            uploader: metadata.uploader || metadata.uploader_id || 'Platform Media',
+            duration: metadata.duration_string || '00:00',
             platform: metadata.extractor_key,
             // Provide direct url if it exists, otherwise provide a "merge" link
             download_url: bestCombined?.url || null,
             merge_required: bestCombined ? false : true,
             media: {
                 all_formats: formats.reverse()
+            },
+            metadata: {
+                views: metadata.view_count || 0,
+                likes: metadata.like_count || 0,
+                comments: metadata.comment_count || 0
             }
         };
 
