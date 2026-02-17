@@ -1,0 +1,20 @@
+{
+  "name": "api-downloader",
+  "version": "1.0.0",
+  "description": "High performance social media downloader API",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@fastify/cors": "^11.2.0",
+    "fastify": "^5.0.0",
+    "node-cache": "^5.1.2",
+    "zod": "^3.0.0"
+  }
+}
