@@ -95,6 +95,14 @@ await fastify.register(fastifyStatic, {
 await fastify.register(fastifyStatic, {
     root: path.join(__dirname, 'fetcher'),
     prefix: '/',
+    decorateReply: false
+});
+
+// Serve Admin Panel (Separated)
+await fastify.register(fastifyStatic, {
+    root: path.join(__dirname, 'admin'),
+    prefix: '/admin-panel/',
+    decorateReply: false
 });
 
 // --- API KEY & ADMIN SYSTEM ---
@@ -115,7 +123,7 @@ const saveApiData = (data) => {
 const validateKey = async (request, reply) => {
     const apiKey = request.headers['x-api-key'] || request.query.apiKey;
     if (!apiKey) return reply.status(401).send({ error: 'api_key_required' });
-    
+
     if (apiKey === ADMIN_API_KEY) return; // Admin bypass
 
     const data = getApiData();
@@ -139,7 +147,7 @@ fastify.post('/api/admin/generate-key', async (request, reply) => {
 
     const { name } = request.body;
     const newKey = `fetcher_${Math.random().toString(36).substring(2, 15)}_${Math.random().toString(36).substring(2, 15)}`;
-    
+
     const data = getApiData();
     const keyObj = {
         key: newKey,
@@ -149,7 +157,7 @@ fastify.post('/api/admin/generate-key', async (request, reply) => {
     };
     data.keys.push(keyObj);
     saveApiData(data);
-    
+
     return { success: true, key: keyObj };
 });
 

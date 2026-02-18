@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Login - Fetcher</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .login-card {
+            max-width: 400px;
+            margin: 10vh auto;
+            padding: 40px;
+            text-align: center;
+        }
+
+        input[type="password"] {
+            width: 100%;
+            padding: 15px;
+            margin: 20px 0;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            color: white;
+            font-size: 1.2rem;
+            text-align: center;
+            outline: none;
+            transition: 0.3s;
+        }
+
+        input[type="password"]:focus {
+            border-color: var(--accent);
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .error-msg {
+            color: var(--error);
+            margin-bottom: 15px;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="background-decor">
+        <div class="circle circle-1"></div>
+        <div class="circle circle-2" style="right: 10%; bottom: 20%;"></div>
+    </div>
+
+    <div class="login-card glass result-card">
+        <div class="logo" style="justify-content: center; margin-bottom: 30px;">
+            <i class="fas fa-bolt"></i>
+            <span>Fetcher</span>
+        </div>
+        <h1>Admin <span class="gradient-text">Auth</span></h1>
+        <p class="subtitle">Enter the secret password to continue.</p>
+
+        <form id="loginForm">
+            <input type="password" id="passInput" placeholder="Secret Key" required>
+            <div id="errorMsg" class="error-msg hidden">Invalid Secret Key!</div>
+            <button type="submit" id="loginBtn" class="download-item best-quality"
+                style="width: 100%; justify-content: center;">
+                <span class="btn-text">ACCESS DASHBOARD</span>
+                <div class="loader-inner hidden"></div>
+            </button>
+        </form>
+
+        <p style="margin-top: 30px; font-size: 0.8rem; opacity: 0.5;">&copy; 2026 Fetcher Security System</p>
+    </div>
+
+    <script>
+        const loginForm = document.getElementById('loginForm');
+        const passInput = document.getElementById('passInput');
+        const errorMsg = document.getElementById('errorMsg');
+        const loginBtn = document.getElementById('loginBtn');
+        const ldr = loginBtn.querySelector('.loader-inner');
+        const txt = loginBtn.querySelector('.btn-text');
+
+        loginForm.onsubmit = async (e) => {
+            e.preventDefault();
+            const password = passInput.value;
+
+            errorMsg.classList.add('hidden');
+            txt.classList.add('hidden');
+            ldr.classList.remove('hidden');
+            loginBtn.disabled = true;
+
+            try {
+                const res = await fetch('/api/admin/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password })
+                });
+
+                if (res.ok) {
+                    const data = await res.json();
+                    localStorage.setItem('admin_token', data.token);
+                    window.location.href = 'api.html';
+                } else {
+                    errorMsg.classList.remove('hidden');
+                }
+            } catch (err) {
+                alert('Connection Error!');
+            } finally {
+                txt.classList.remove('hidden');
+                ldr.classList.add('hidden');
+                loginBtn.disabled = false;
+            }
+        };
+    </script>
+</body>
+
+</html>

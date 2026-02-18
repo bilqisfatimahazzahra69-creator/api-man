@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Management - Fetcher</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .api-container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .key-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            margin-bottom: 10px;
+        }
+
+        .key-info {
+            flex: 1;
+        }
+
+        .key-value {
+            font-family: monospace;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 5px 10px;
+            border-radius: 5px;
+            color: var(--accent);
+        }
+
+        .status-badge {
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.7rem;
+            font-weight: bold;
+        }
+
+        .status-active {
+            background: var(--success);
+            color: #000;
+        }
+
+        .status-inactive {
+            background: var(--error);
+            color: #fff;
+        }
+
+        pre {
+            background: rgba(0, 0, 0, 0.5);
+            padding: 20px;
+            border-radius: 10px;
+            overflow-x: auto;
+            text-align: left;
+        }
+
+        code {
+            color: var(--accent);
+        }
+
+        .doc-section {
+            margin-top: 40px;
+            text-align: left;
+        }
+
+        .btn-sm {
+            padding: 5px 15px;
+            font-size: 0.8rem;
+        }
+
+        .logout-btn {
+            color: var(--error);
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="background-decor">
+        <div class="circle circle-1"></div>
+        <div class="circle circle-2"></div>
+    </div>
+
+    <div class="api-container">
+        <header>
+            <div class="logo">
+                <i class="fas fa-bolt"></i>
+                <span>Fetcher <span class="gradient-text">API</span></span>
+            </div>
+            <h1 style="font-size: 2.5rem;">Modern API <span class="gradient-text">Dashboard</span></h1>
+            <p class="subtitle">Manage tokens and explore integration documentation.</p>
+        </header>
+
+        <div id="adminPanel" class="hidden">
+            <div class="card-header">
+                <h2>Generated Keys</h2>
+                <button id="genKeyBtn" class="glass-mini-btn btn-sm"><i class="fas fa-plus"></i> NEW KEY</button>
+            </div>
+            <div id="keysList" class="format-grid">
+                <!-- Keys will be injected here -->
+            </div>
+            <div style="margin-top: 20px; text-align: right;">
+                <span class="logout-btn" id="logoutBtn"><i class="fas fa-sign-out-alt"></i> Logout</span>
+            </div>
+        </div>
+
+        <div id="loginPrompt" class="glass result-card"
+            style="text-align: center; max-width: 400px; margin: 40px auto;">
+            <i class="fas fa-lock" style="font-size: 3rem; margin-bottom: 20px; color: var(--accent);"></i>
+            <h3>Admin Restricted</h3>
+            <p style="margin-bottom: 20px;">Please login to manage API keys.</p>
+            <a href="login.html" class="download-item best-quality" style="justify-content: center;">LOGIN AS ADMIN</a>
+        </div>
+
+        <section class="doc-section glass result-card">
+            <h2><i class="fas fa-book"></i> API Documentation</h2>
+            <p>Integrate Fetcher media downloader into your own applications easily.</p>
+
+            <h3>1. Fetch Media Info</h3>
+            <p>Get download links and metadata for any supported URL.</p>
+            <pre><code>GET /api/download?url={YOUR_URL}
+Headers:
+  x-api-key: YOUR_API_KEY</code></pre>
+
+            <h3>2. Response Object</h3>
+            <pre><code>{
+  "title": "Cool Video",
+  "thumbnail": "https://...",
+  "download_url": "https://...",
+  "platform": "TikTok",
+  "media": {
+    "all_formats": [...]
+  }
+}</code></pre>
+
+            <h3>3. Request Progress</h3>
+            <p>Poll progress for best quality processing.</p>
+            <pre><code>GET /api/progress?taskId={TASK_ID}</code></pre>
+        </section>
+    </div>
+
+    <script>
+        const token = localStorage.getItem('admin_token');
+        const adminPanel = document.getElementById('adminPanel');
+        const loginPrompt = document.getElementById('loginPrompt');
+        const keysList = document.getElementById('keysList');
+        const genKeyBtn = document.getElementById('genKeyBtn');
+        const logoutBtn = document.getElementById('logoutBtn');
+
+        if (token) {
+            adminPanel.classList.remove('hidden');
+            loginPrompt.classList.add('hidden');
+            fetchKeys();
+        }
+
+        async function fetchKeys() {
+            try {
+                const res = await fetch('/api/admin/keys', {
+                    headers: { 'Authorization': token }
+                });
+                if (res.status === 401) { logout(); return; }
+                const data = await res.json();
+                renderKeys(data.keys);
+            } catch (e) { console.error(e); }
+        }
+
+        function renderKeys(keys) {
+            keysList.innerHTML = '';
+            keys.forEach(k => {
+                const el = document.createElement('div');
+                el.className = 'download-item glass-mini';
+                el.style.marginBottom = '10px';
+                el.innerHTML = `
+                    <div class="key-info">
+                        <div style="font-weight: bold;">${k.name}</div>
+                        <div class="key-value">${k.key}</div>
+                        <div style="font-size: 0.7rem; color: #888; margin-top: 5px;">Created: ${new Date(k.created_at).toLocaleDateString()}</div>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 15px;">
+                        <span class="status-badge ${k.active ? 'status-active' : 'status-inactive'}">${k.active ? 'ACTIVE' : 'INACTIVE'}</span>
+                        <button onclick="toggleKey('${k.key}')" class="glass-mini-btn btn-sm"><i class="fas ${k.active ? 'fa-ban' : 'fa-check'}"></i></button>
+                    </div>
+                `;
+                keysList.appendChild(el);
+            });
+        }
+
+        async function toggleKey(key) {
+            await fetch('/api/admin/toggle-key', {
+                method: 'POST',
+                headers: { 'Authorization': token, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key })
+            });
+            fetchKeys();
+        }
+
+        genKeyBtn.onclick = async () => {
+            const name = prompt('Client Name?');
+            if (!name) return;
+            await fetch('/api/admin/generate-key', {
+                method: 'POST',
+                headers: { 'Authorization': token, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name })
+            });
+            fetchKeys();
+        };
+
+        logoutBtn.onclick = logout;
+        function logout() {
+            localStorage.removeItem('admin_token');
+            window.location.reload();
+        }
+    </script>
+</body>
+
+</html>
