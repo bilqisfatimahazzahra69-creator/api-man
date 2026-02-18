@@ -28,7 +28,32 @@ const TELE_CHAT_ID = process.env.TELE_CHAT_ID;
 
 // COOKIES SUPPORT
 const cookieFile = path.join(__dirname, 'cookies.txt');
-const getCookieArg = () => fs.existsSync(cookieFile) ? `--cookies "${cookieFile}"` : '';
+const getCookieArgs = () => fs.existsSync(cookieFile) ? ['--cookies', cookieFile] : [];
+
+/**
+ * OWN API CODE: Modern, secure way to run yt-dlp without shell issues
+ */
+async function runYtDlp(args) {
+    return new Promise((resolve, reject) => {
+        const child = spawn('yt-dlp', args);
+        let stdout = '';
+        let stderr = '';
+
+        child.stdout.on('data', data => stdout += data.toString());
+        child.stderr.on('data', data => stderr += data.toString());
+
+        child.on('close', (code) => {
+            if (code === 0 || (stdout && stdout.trim())) {
+                resolve({ stdout, stderr });
+            } else {
+                const err = new Error(stderr || `yt-dlp exited with code ${code}`);
+                err.stdout = stdout;
+                err.stderr = stderr;
+                reject(err);
+            }
+        });
+    });
+}
 
 // STATIC BASE URL HELPER
 const getPublicUrl = (request) => {
@@ -59,9 +84,96 @@ await fastify.register(multipart, {
 const tempDir = path.join(__dirname, 'temp');
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
 
+// Serve Temp Files
 await fastify.register(fastifyStatic, {
     root: tempDir,
     prefix: '/temp/',
+    decorateReply: false
+});
+
+// Serve Frontend (Fetcher)
+await fastify.register(fastifyStatic, {
+    root: path.join(__dirname, 'fetcher'),
+    prefix: '/',
+});
+
+// --- API KEY & ADMIN SYSTEM ---
+const DATA_FILE = path.join(__dirname, 'api_data.json');
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || 'super-secret-admin-key';
+
+const getApiData = () => {
+    if (!fs.existsSync(DATA_FILE)) return { keys: [] };
+    return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+};
+
+const saveApiData = (data) => {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+};
+
+// Middleware: Validate API Key
+const validateKey = async (request, reply) => {
+    const apiKey = request.headers['x-api-key'] || request.query.apiKey;
+    if (!apiKey) return reply.status(401).send({ error: 'api_key_required' });
+    
+    if (apiKey === ADMIN_API_KEY) return; // Admin bypass
+
+    const data = getApiData();
+    const keyExists = data.keys.find(k => k.key === apiKey && k.active);
+    if (!keyExists) return reply.status(403).send({ error: 'invalid_or_inactive_api_key' });
+};
+
+// Admin Login
+fastify.post('/api/admin/login', async (request, reply) => {
+    const { password } = request.body;
+    if (password === ADMIN_PASSWORD) {
+        return { success: true, token: ADMIN_API_KEY };
+    }
+    return reply.status(401).send({ error: 'invalid_password' });
+});
+
+// Generate New API Key (Admin Only)
+fastify.post('/api/admin/generate-key', async (request, reply) => {
+    const authHeader = request.headers.authorization;
+    if (authHeader !== ADMIN_API_KEY) return reply.status(401).send({ error: 'unauthorized' });
+
+    const { name } = request.body;
+    const newKey = `fetcher_${Math.random().toString(36).substring(2, 15)}_${Math.random().toString(36).substring(2, 15)}`;
+    
+    const data = getApiData();
+    const keyObj = {
+        key: newKey,
+        name: name || 'Unnamed Client',
+        created_at: new Date().toISOString(),
+        active: true
+    };
+    data.keys.push(keyObj);
+    saveApiData(data);
+    
+    return { success: true, key: keyObj };
+});
+
+// Get All Keys (Admin Only)
+fastify.get('/api/admin/keys', async (request, reply) => {
+    const authHeader = request.headers.authorization;
+    if (authHeader !== ADMIN_API_KEY) return reply.status(401).send({ error: 'unauthorized' });
+    return getApiData();
+});
+
+// Delete/Deactivate Key (Admin Only)
+fastify.post('/api/admin/toggle-key', async (request, reply) => {
+    const authHeader = request.headers.authorization;
+    if (authHeader !== ADMIN_API_KEY) return reply.status(401).send({ error: 'unauthorized' });
+
+    const { key } = request.body;
+    const data = getApiData();
+    const keyItem = data.keys.find(k => k.key === key);
+    if (keyItem) {
+        keyItem.active = !keyItem.active;
+        saveApiData(data);
+        return { success: true, active: keyItem.active };
+    }
+    return reply.status(404).send({ error: 'key_not_found' });
 });
 
 // CLEANUP: Hapus total setiap 12 jam
@@ -79,7 +191,8 @@ setInterval(() => {
 // API CONFIG FOR FRONTEND (Hanya untuk info port atau metadata lain)
 fastify.get('/api/config', async () => {
     return {
-        LOCAL_PORT: process.env.PORT || 7000
+        LOCAL_PORT: process.env.PORT || 7000,
+        AUTH_REQUIRED: !!process.env.USE_API_KEY
     };
 });
 
@@ -92,6 +205,7 @@ fastify.get('/api/progress', async (request, reply) => {
 
 // PREPARE DOWNLOAD ENDPOINT
 fastify.get('/api/prepare', async (request, reply) => {
+    if (process.env.USE_API_KEY) await validateKey(request, reply);
     const { url, h } = request.query;
     if (!url || !h) return reply.status(400).send({ error: 'url_and_h_required' });
 
@@ -245,89 +359,91 @@ async function fetchTikTokFallback(url) {
 }
 
 // INSTAGRAM FALLBACK API (Using multiple robust public sources)
-async function fetchInstagramFallback(url) {
-    // Sources to try in order
-    const sources = [
-        {
-            name: 'VkrDown',
-            url: `https://api.vkrdown.com/insta/?url=${encodeURIComponent(url)}`,
-            headers: { 'Referer': 'https://vkrdown.com/' }
-        },
-        {
-            name: 'SnapInsta',
-            url: `https://api.snapinsta.app/info?url=${encodeURIComponent(url)}`,
-            headers: { 'Referer': 'https://snapinsta.app/' }
-        },
-        {
-            name: 'SaveIG',
-            url: `https://saveig.app/api/info?url=${encodeURIComponent(url)}`,
-            headers: { 'Referer': 'https://saveig.app/' }
-        }
-    ];
-
+// OWN API CODE: Local Instagram Scraper (No external APIs needed)
+async function fetchInstagramLocal(url) {
     const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36';
 
-    for (const source of sources) {
-        try {
-            console.log(`Trying Instagram fallback: ${source.name}...`);
-            const res = await axios.get(source.url, {
-                headers: { ...source.headers, 'User-Agent': userAgent },
-                timeout: 10000
+    try {
+        console.log('Running Internal Instagram Scraper...');
+        // Use args array to avoid shell/syntax errors
+        const args = [
+            ...getCookieArgs(),
+            '--user-agent', userAgent,
+            '--add-header', 'X-IG-App-ID:936619743392459',
+            '--dump-json',
+            '--no-playlist',
+            '--no-check-certificates',
+            '--ignore-errors',
+            url
+        ];
+
+        const { stdout } = await runYtDlp(args);
+        if (!stdout || stdout.trim() === '') return null;
+
+        const metadata = JSON.parse(stdout);
+        const results = [];
+
+        // If it's a carousel/photo post, yt-dlp might put them in thumbnails or formats
+        // We prioritize formats if they exist, otherwise we use thumbnails
+        const formats = metadata.formats || [];
+        const hasMedia = formats.some(f => f.vcodec !== 'none');
+
+        if (!hasMedia && metadata.thumbnails) {
+            // This is likely a photo/carousel post
+            metadata.thumbnails.forEach((t, i) => {
+                if (t.url && (t.url.includes('cdninstagram.com') || t.url.includes('.jpg'))) {
+                    results.push({
+                        url: t.url,
+                        type: 'photo',
+                        id: `slide_${i}`
+                    });
+                }
             });
-            const data = res.data;
-
-            // Normalize data based on source
-            let results = [];
-            let title = 'Instagram Media';
-            let thumb = '';
-
-            if (source.name === 'VkrDown' && data.data) {
-                results = data.data.map(m => ({ url: m.url, type: m.type }));
-            } else if (source.name === 'SnapInsta' && data.data) {
-                results = data.data;
-            } else if (source.name === 'SaveIG' && data.data) {
-                results = data.data;
-            }
-
-            results = results.filter(r => r && r.url);
-            if (results.length === 0) continue;
-
-            const mainMedia = results[0];
-            const isPhoto = mainMedia.type === 'photo' || mainMedia.url?.includes('.jpg') || mainMedia.url?.includes('.webp');
-
-            return {
-                id: `ig_${Date.now()}`,
-                title: title || (isPhoto ? 'Instagram Photo' : 'Instagram Video'),
-                thumbnail: thumb || mainMedia.url || mainMedia.thumb,
-                uploader: 'Instagram User',
-                duration: '00:00',
-                platform: isPhoto ? 'Instagram Photo/Slide' : 'Instagram (Fallback)',
-                download_url: mainMedia.url,
-                merge_required: false,
-                media: {
-                    all_formats: results.map((m, i) => {
-                        const isImg = m.type === 'photo' || m.url?.includes('.jpg') || m.url?.includes('.webp');
-                        return {
-                            id: `ig_${i}`,
-                            ext: isImg ? 'jpg' : 'mp4',
-                            vcodec: isImg ? 'image' : 'h264',
-                            resolution: m.type === 'photo' ? `Slide ${i + 1}` : `Video ${i + 1}`,
-                            url: m.url
-                        };
-                    })
-                },
-                metadata: { views: 0, likes: 0, comments: 0 },
-                _forceProxy: true
-            };
-        } catch (e) {
-            console.error(`Instagram Fallback ${source.name} failed:`, e.message);
-            continue;
+        } else {
+            // It has video, use the formats
+            formats.filter(f => f.vcodec !== 'none' || f.acodec !== 'none').forEach((f, i) => {
+                results.push({
+                    url: f.url,
+                    type: f.vcodec === 'none' ? 'audio' : 'video',
+                    ext: f.ext,
+                    id: f.format_id || `media_${i}`
+                });
+            });
         }
+
+        if (results.length === 0) return null;
+
+        const isPhoto = results.some(r => r.type === 'photo');
+
+        return {
+            id: metadata.id || `ig_${Date.now()}`,
+            title: metadata.title || (isPhoto ? 'Instagram Photo/Slide' : 'Instagram Video'),
+            thumbnail: metadata.thumbnail || results[0].url,
+            uploader: metadata.uploader || 'Instagram User',
+            duration: metadata.duration_string || '00:00',
+            platform: isPhoto ? 'Instagram Photo/Slide' : 'Instagram (Local)',
+            download_url: isPhoto ? null : results.find(r => r.type === 'video')?.url,
+            merge_required: false,
+            media: {
+                all_formats: results.map((m, i) => ({
+                    id: m.id,
+                    ext: m.type === 'photo' ? 'jpg' : (m.ext || 'mp4'),
+                    vcodec: m.type === 'photo' ? 'image' : (m.type === 'audio' ? 'none' : 'h264'),
+                    resolution: m.type === 'photo' ? `Slide ${i + 1}` : (m.type === 'audio' ? 'Audio' : 'Video'),
+                    url: m.url
+                }))
+            },
+            metadata: { views: 0, likes: 0, comments: 0 },
+            _forceProxy: true
+        };
+    } catch (e) {
+        console.error('Local Scraper Error:', e.message);
+        return null;
     }
-    return null;
 }
 
 fastify.get('/api/download', async (request, reply) => {
+    if (process.env.USE_API_KEY) await validateKey(request, reply);
     const result = downloadSchema.safeParse(request.query);
     if (!result.success) return reply.status(400).send({ error: 'invalid_url' });
 
@@ -352,9 +468,36 @@ fastify.get('/api/download', async (request, reply) => {
             const isInstaUrl = url.includes('instagram.com');
             const referer = isInstaUrl ? 'https://www.instagram.com/' : 'https://www.tiktok.com/';
 
-            const cmd = `yt-dlp ${getCookieArg()} --user-agent "${userAgent}" --add-header "Referer:${referer}" --dump-json --no-playlist --no-check-certificates "${url}"`;
+            // OWN API CODE: Args array prevents "/bin/sh: Syntax error"
+            const args = [
+                ...getCookieArgs(),
+                '--user-agent', userAgent,
+                '--add-header', `Referer:${referer}`,
+                ...(isInstaUrl ? ['--add-header', 'X-IG-App-ID:936619743392459'] : []),
+                '--dump-json',
+                '--no-playlist',
+                '--no-check-certificates',
+                url
+            ];
 
-            const { stdout } = await execPromise(cmd);
+            let stdout, stderr;
+            try {
+                const result = await runYtDlp(args);
+                stdout = result.stdout;
+                stderr = result.stderr;
+            } catch (e) {
+                stdout = e.stdout || '';
+                stderr = e.stderr || e.message;
+            }
+
+            if (!stdout || stdout.trim() === '') {
+                // If it fails (e.g. no video error), and it's Instagram, try the Internal Scraper
+                if (isInstaUrl) {
+                    const localRes = await fetchInstagramLocal(url);
+                    if (localRes) { cache.set(url, localRes); return reply.send(localRes); }
+                }
+                throw new Error(stderr || 'yt-dlp returned empty output');
+            }
             const metadata = JSON.parse(stdout);
 
             let thumbnail = metadata.thumbnail;
@@ -362,6 +505,7 @@ fastify.get('/api/download', async (request, reply) => {
                 thumbnail = metadata.thumbnails[metadata.thumbnails.length - 1].url;
             }
 
+            // Extract all slides if it's an Instagram Carousel
             const formats = (metadata.formats || []).map(f => ({
                 id: f.format_id,
                 ext: f.ext,
@@ -371,6 +515,21 @@ fastify.get('/api/download', async (request, reply) => {
                 resolution: f.resolution || (f.width ? `${f.width}x${f.height}` : null),
                 filesize: f.filesize || f.filesize_approx
             }));
+
+            // Force images into formats if it's a photo post and formats are empty
+            if (isInstaUrl && formats.filter(f => f.vcodec !== 'none').length === 0) {
+                if (metadata.thumbnails && metadata.thumbnails.length > 0) {
+                    metadata.thumbnails.forEach((t, i) => {
+                        formats.push({
+                            id: `photo_${i}`,
+                            ext: 'jpg',
+                            vcodec: 'image',
+                            url: t.url,
+                            resolution: `Slide ${i + 1}`
+                        });
+                    });
+                }
+            }
 
             const isTikTok = metadata.extractor_key?.toLowerCase().includes('tiktok');
             const isInstaExt = metadata.extractor_key?.toLowerCase().includes('instagram');
@@ -387,7 +546,7 @@ fastify.get('/api/download', async (request, reply) => {
                 thumbnail: thumbnail,
                 uploader: metadata.uploader || metadata.uploader_id || metadata.webpage_url_domain || 'Social Media',
                 duration: metadata.duration_string || '00:00',
-                platform: metadata.extractor_key,
+                platform: isInstaExt && formats.some(f => f.vcodec === 'image') ? 'Instagram Photo/Slide' : metadata.extractor_key,
                 download_url: bestCombined?.url || null,
                 merge_required: bestCombined ? false : true,
                 media: { all_formats: formats.reverse() },
@@ -402,13 +561,13 @@ fastify.get('/api/download', async (request, reply) => {
             cache.set(url, response);
         } catch (err) {
             // SMART FALLBACK FOR TIKTOK & INSTAGRAM
-            const isNoVideoErr = err.message.includes('There is no video in this post');
+            const isNoVideoErr = err.message.includes('There is no video in this post') || err.message.includes('Syntax error');
 
             if (url.includes('tiktok.com')) {
                 const fallback = await fetchTikTokFallback(url);
                 if (fallback) { cache.set(url, fallback); return fallback; }
             } else if (url.includes('instagram.com') || isNoVideoErr) {
-                const fallback = await fetchInstagramFallback(url);
+                const fallback = await fetchInstagramLocal(url);
                 if (fallback) { cache.set(url, fallback); return fallback; }
             }
 
@@ -436,7 +595,9 @@ fastify.get('/api/download', async (request, reply) => {
     }
 
     // ALWAYS generate a fresh unique hash for the download URL, even if metadata is cached
-    if (response.merge_required || response._forceProxy) {
+    const isSlideFinal = response.platform?.includes('Photo') || response.platform?.includes('Slide');
+
+    if (!isSlideFinal && (response.merge_required || response._forceProxy)) {
         const uniqueHash = Buffer.from(url + Date.now() + Math.random()).toString('hex').slice(0, 15);
         response.download_url = `${publicUrl}/api/proxy?url=${encodeURIComponent(url)}&h=${uniqueHash}`;
     }
@@ -446,7 +607,7 @@ fastify.get('/api/download', async (request, reply) => {
 
 fastify.get('/api/proxy', async (request, reply) => {
     const { url, h } = request.query;
-    if (!url) return reply.status(400).send('URL required');
+    if (!url || url === 'null' || url === 'undefined') return reply.status(400).send('Valid URL required');
 
     const fileId = h || Buffer.from(url).toString('hex').slice(0, 12);
     const outPath = path.join(tempDir, `${fileId}_final.mp4`);
